@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Todo Dashboard</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <h1>Todo Dashboard</h1>
+    <div class="topbar-actions">
+      <button id="syncBtn" class="btn btn-ghost" title="Poll IRIS &amp; Missive now">⟳ Sync</button>
+      <button id="newTaskBtn" class="btn btn-primary">+ New task</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="open">Open</button>
+    <button class="tab" data-tab="resolved">Resolved</button>
+    <button class="tab" data-tab="done">Done</button>
+  </nav>
+
+  <main>
+    <ul id="taskList" class="task-list"></ul>
+    <p id="emptyState" class="empty-state" hidden>Nothing here.</p>
+  </main>
+</div>
+
+<!-- Task detail / comments drawer -->
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-backdrop"></div>
+  <div class="drawer-panel">
+    <button class="drawer-close" id="drawerClose">&times;</button>
+    <h2 id="drawerTitle"></h2>
+    <div class="drawer-meta">
+      <span id="drawerSource" class="badge"></span>
+      <a id="drawerLink" href="#" target="_blank" rel="noopener">Open in source ↗</a>
+    </div>
+
+    <div id="missiveThread" class="missive-thread" hidden>
+      <h3>Email thread</h3>
+      <div id="missiveMessages"></div>
+    </div>
+
+    <div class="status-controls">
+      <label>Status
+        <select id="statusSelect">
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+          <option value="done">Done</option>
+        </select>
+      </label>
+      <label>Importance
+        <select id="importanceSelect">
+          <option value="1">Low</option>
+          <option value="2">Normal</option>
+          <option value="3">High</option>
+          <option value="4">Urgent</option>
+        </select>
+      </label>
+    </div>
+
+    <h3>Comments</h3>
+    <div class="comment-composer">
+      <select id="templateSelect">
+        <option value="">Comment template…</option>
+      </select>
+      <textarea id="commentBody" placeholder="Add a comment…"></textarea>
+      <button id="postCommentBtn" class="btn btn-primary">Post comment</button>
+    </div>
+    <ul id="commentList" class="comment-list"></ul>
+  </div>
+</div>
+
+<!-- New task modal -->
+<div id="newTaskModal" class="drawer" hidden>
+  <div class="drawer-backdrop"></div>
+  <div class="drawer-panel small">
+    <button class="drawer-close" id="newTaskClose">&times;</button>
+    <h2>New task</h2>
+    <label>Title <input id="newTaskTitle" type="text" /></label>
+    <label>Link (optional) <input id="newTaskUrl" type="url" /></label>
+    <label>Importance
+      <select id="newTaskImportance">
+        <option value="1">Low</option>
+        <option value="2" selected>Normal</option>
+        <option value="3">High</option>
+        <option value="4">Urgent</option>
+      </select>
+    </label>
+    <button id="createTaskBtn" class="btn btn-primary">Create</button>
+  </div>
+</div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>
