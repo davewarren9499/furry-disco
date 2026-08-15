@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title TEXT NOT NULL,
   url TEXT,                          -- deep link back to source
   importance INTEGER NOT NULL DEFAULT 2,  -- 1 low, 2 normal, 3 high, 4 urgent
-  rank REAL NOT NULL DEFAULT 0,      -- manual ordering, lower = higher on list
+  rank REAL NOT NULL DEFAULT 0,      -- vestigial: was drag-and-drop ordering: no longer read/written (list sorts by date added instead)
   status TEXT NOT NULL DEFAULT 'open', -- 'open' | 'resolved' | 'done'
   reason TEXT,                       -- why it's on the board: 'assigned' | 'mentioned'
   assignee TEXT,
@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS comment_templates (
 CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
   value TEXT
+);
+
+-- DBA name rarely changes, so we cache it per merchant id instead of
+-- looking it up on every poll (IRIS has no bulk "DBA by mid list" endpoint).
+CREATE TABLE IF NOT EXISTS merchant_cache (
+  mid TEXT PRIMARY KEY,
+  dba TEXT,
+  cached_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
 

@@ -1,12 +1,14 @@
 // Missive integration.
 //
-// NOTE: docs.missiveapp.com/learn.missiveapp.com were unreachable from this
-// build environment (network egress blocked), so paths follow Missive's
-// publicly documented REST conventions (bearer token, /v1/conversations,
-// /v1/messages) rather than a verified spec against your account. Missive
-// has no "task" object of its own — a "task" here means a conversation
-// assigned to you (Missive supports per-user conversation assignment),
-// which is the natural analogue.
+// Verified against missiveapp.com/docs/developers/rest-api and live requests
+// against the real account. Missive has no "task" object of its own — a
+// "task" here means a conversation assigned to you (Missive supports
+// per-user conversation assignment), which is the natural analogue.
+//
+// GET /conversations requires at least one mailbox-scope filter or it 400s
+// with "You need to paginate at least one mailbox" — the scope we want is
+// the boolean `assigned=true` flag (conversations assigned to the token's
+// own user), not an `assignee=<id>` query param.
 
 const BASE_URL = process.env.MISSIVE_BASE_URL || 'https://public.missiveapp.com/v1';
 const API_TOKEN = process.env.MISSIVE_API_TOKEN;
@@ -33,10 +35,11 @@ async function missiveFetch(pathname, options = {}) {
   return res.json();
 }
 
-// Conversations currently assigned to me and not yet archived/closed.
+// Conversations currently assigned to me (open or closed — we read closed
+// status per-conversation below so the poller can move them to Resolved).
 export async function fetchAssignedConversations() {
   assertConfigured();
-  const params = new URLSearchParams({ assignee: MY_USER_ID, limit: '50' });
+  const params = new URLSearchParams({ assigned: 'true', limit: '50' });
   const data = await missiveFetch(`/conversations?${params}`);
   return data.conversations || data.data || [];
 }
@@ -56,13 +59,22 @@ export function normalizeConversation(conv) {
     source: 'missive',
     source_id: String(conv.id),
     title: conv.subject || conv.latest_message_subject || '(no subject)',
-    url: conversationUrl(conv.id),
-    status: conv.closed ? 'resolved' : 'open',
+    url: conv.web_url || conversationUrl(conv.id),
+    status: conv.closed_at ? 'resolved' : 'open',
+    // Missive timestamps are Unix seconds; convert to ISO so it sorts
+    // correctly alongside IRIS's ISO timestamps in the resolved list.
+    resolvedAt: conv.closed_at ? new Date(conv.closed_at * 1000).toISOString() : null,
     reason: 'assigned',
     assignee: 'me',
     meta: JSON.stringify({
-      lastActivityAt: conv.last_activity_at,
-      teamId: conv.team_id,
+      // Missive has no separate "last comment" concept -- last_activity_at
+      // (unix seconds) is the closest equivalent, and doubles as that field
+      // for the unified sort-by-last-comment option (see tasks.js).
+      lastCommentAt: conv.last_activity_at ? new Date(conv.last_activity_at * 1000).toISOString() : null,
+      teamId: conv.team?.id ?? null,
+      // When the conversation was actually created in Missive, not when we
+      // first synced it into this dashboard (created_at on the tasks row).
+      createdAt: conv.created_at ? new Date(conv.created_at * 1000).toISOString() : null,
     }),
   };
 }

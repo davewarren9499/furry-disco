@@ -43,10 +43,13 @@ manual tasks.
   your assigned tickets/conversations, and separately scans tickets updated
   since the last poll for a comment that @mentions you, even if you're not
   the assignee.
-- Resolving/closing a task in the dashboard pushes the status back to IRIS.
-  Missive has no per-conversation "status" concept beyond assignment, so
-  Missive tasks are marked resolved/done locally only — reply and archive in
-  Missive itself.
+- Status changes made in the dashboard (Open ⇄ Done) are local-only and never
+  write back to IRIS or Missive — this dashboard is read-only with respect to
+  ticket/conversation status. `resolved` specifically can only be set by the
+  source sync (see `server/poller.js`); the UI and API both reject any
+  attempt to set it manually, since that's the one status IRIS/Missive
+  themselves are authoritative over. Posting a comment is the one action
+  that *does* write back to IRIS for real (see `server/routes/comments.js`).
 - Comment templates are just named snippets stored in SQLite, picked from a
   dropdown in the task drawer and inserted into the comment box for editing
   before posting.

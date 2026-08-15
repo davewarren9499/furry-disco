@@ -7,13 +7,15 @@ export const missiveRouter = Router();
 // Live thread + task info for a Missive-sourced task, fetched fresh so
 // replies sent from Missive itself show up without waiting for a poll.
 missiveRouter.get('/thread/:taskId', async (req, res) => {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.taskId);
-  if (!task || task.source !== 'missive') return res.status(404).json({ error: 'not a missive task' });
-
+  // Whole handler inside this try -- see the same note in routes/iris.js
+  // and routes/comments.js: an uncaught throw in an async Express 4
+  // handler otherwise hangs the request instead of erroring.
   try {
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.taskId);
+    if (!task || task.source !== 'missive') return res.status(404).json({ error: 'not a missive task' });
+
     const messages = await missive.fetchConversationMessages(task.source_id);
     res.json({
-      task: { ...task, meta: task.meta ? JSON.parse(task.meta) : null },
       messages: messages.map((m) => ({
         id: m.id,
         from: m.from_field?.address || m.from,

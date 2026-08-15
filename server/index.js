@@ -7,6 +7,7 @@ import { tasksRouter } from './routes/tasks.js';
 import { commentsRouter } from './routes/comments.js';
 import { templatesRouter } from './routes/templates.js';
 import { missiveRouter } from './routes/missive.js';
+import { irisRouter } from './routes/iris.js';
 import { pollAll } from './poller.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,10 +22,22 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/comments', commentsRouter);
 app.use('/api/templates', templatesRouter);
 app.use('/api/missive', missiveRouter);
+app.use('/api/iris', irisRouter);
 
 app.post('/api/sync', async (req, res) => {
   const result = await pollAll();
   res.json(result);
+});
+
+// Safety net: every route handler in this app returns JSON errors
+// deliberately, but a handler that throws synchronously (or an async one
+// whose own try/catch doesn't cover it) would otherwise fall through to
+// Express's default HTML error page. Must be registered after all routes,
+// and keep all four params -- that's what makes Express treat it as an
+// error handler rather than a normal middleware.
+app.use((err, req, res, next) => {
+  console.error('[unhandled]', err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
 app.listen(PORT, () => {
