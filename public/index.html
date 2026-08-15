@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Todo Dashboard</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <h1>Todo Dashboard</h1>
+    <div class="topbar-actions">
+      <div class="views-bar">
+        <select id="viewSelect"><option value="">Views…</option></select>
+        <button id="saveViewBtn" class="btn btn-ghost" title="Save current tab, filters &amp; search as a view">☆ Save view</button>
+        <button id="manageViewsBtn" class="btn btn-ghost" title="Manage saved views">⚙</button>
+      </div>
+      <button id="syncBtn" class="btn btn-ghost" title="Poll IRIS &amp; Missive now">⟳ Sync</button>
+      <button id="newTaskBtn" class="btn btn-primary">+ New task</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <section class="list-panel">
+      <nav class="tabs">
+        <button class="tab active" data-tab="open">Open <span class="tab-count" id="count-open"></span></button>
+        <button class="tab" data-tab="resolved">Resolved <span class="tab-count" id="count-resolved"></span></button>
+        <button class="tab" data-tab="done">Done <span class="tab-count" id="count-done"></span></button>
+      </nav>
+
+      <div class="list-filter" id="listFilter">
+        <input id="searchInput" type="search" placeholder="Search title, MID, DBA, type, comments…" />
+        <div class="multiselect">
+          <button type="button" id="typeMsBtn" class="ms-btn">All ticket types</button>
+          <div class="ms-panel" id="typeMsPanel" hidden>
+            <div class="ms-actions">
+              <button type="button" id="typeSelectAll">Select all</button>
+              <button type="button" id="typeSelectNone">Clear</button>
+            </div>
+            <div id="typeCheckboxList" class="ms-list"></div>
+          </div>
+        </div>
+        <div class="multiselect">
+          <button type="button" id="priorityMsBtn" class="ms-btn">All priorities</button>
+          <div class="ms-panel" id="priorityMsPanel" hidden>
+            <div class="ms-actions">
+              <button type="button" id="prioritySelectAll">Select all</button>
+              <button type="button" id="prioritySelectNone">Clear</button>
+            </div>
+            <div id="priorityCheckboxList" class="ms-list"></div>
+          </div>
+        </div>
+        <div class="sort-control">
+          <label for="sortSelect">Sort</label>
+          <select id="sortSelect">
+            <option value="added">Date added</option>
+            <option value="comment">Last comment</option>
+          </select>
+        </div>
+      </div>
+      <p class="list-filter-note" id="listFilterNote" hidden>Mentioned tickets and Missive always show regardless of filters.</p>
+
+      <div class="bulk-bar" id="bulkBar" hidden>
+        <span id="bulkCount"></span>
+        <div class="bulk-actions">
+          <button class="btn btn-ghost" data-bulk-status="open">Move to Open</button>
+          <button class="btn btn-primary" data-bulk-status="done">Move to Done</button>
+          <button class="btn btn-ghost" id="bulkClear">Clear</button>
+        </div>
+      </div>
+
+      <div class="list-scroll">
+        <ul id="taskList" class="task-list"></ul>
+        <p id="emptyState" class="empty-state" hidden>Nothing here.</p>
+      </div>
+    </section>
+
+    <div class="panel-resizer" id="panelResizer"></div>
+
+    <section class="detail-panel">
+      <div id="detailEmpty" class="detail-empty">
+        <p>Select a task to see details</p>
+      </div>
+
+      <div id="detailContent" class="detail-content" hidden>
+        <div class="detail-header">
+          <div class="detail-heading">
+            <h2 id="drawerTitle"></h2>
+            <div class="drawer-meta">
+              <span id="drawerSource" class="badge"></span>
+              <a id="drawerLink" href="#" target="_blank" rel="noopener"></a>
+              <a id="drawerMerchantLink" href="#" target="_blank" rel="noopener">Open merchant ↗</a>
+            </div>
+          </div>
+          <button class="detail-close" id="drawerClose" title="Close">&times;</button>
+        </div>
+
+        <div class="status-controls">
+          <label>Status
+            <select id="statusSelect">
+              <option value="open">Open</option>
+              <option value="resolved" disabled>Resolved</option>
+              <option value="done">Done</option>
+            </select>
+          </label>
+          <label>Importance
+            <select id="importanceSelect">
+              <option value="1">Low</option>
+              <option value="2">Normal</option>
+              <option value="3">High</option>
+              <option value="4">Urgent</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="pdfViewer" class="pdf-viewer" hidden>
+          <div class="pdf-viewer-header">
+            <span id="pdfViewerName"></span>
+            <div class="pdf-viewer-actions">
+              <a id="pdfViewerDownload" href="#" target="_blank" rel="noopener">Download ↓</a>
+              <button type="button" id="pdfViewerClose" class="detail-close" title="Close viewer">&times;</button>
+            </div>
+          </div>
+          <iframe id="pdfViewerFrame" title="PDF preview"></iframe>
+        </div>
+
+        <div class="detail-columns">
+          <div class="detail-main">
+            <div id="ticketInfo" class="ticket-info" hidden>
+              <h3>Ticket info</h3>
+              <div id="ticketInfoBody"></div>
+            </div>
+
+            <div id="relatedTickets" class="ticket-info" hidden>
+              <h3>Other open tickets for this merchant</h3>
+              <ul id="relatedTicketsList" class="related-tickets-list"></ul>
+            </div>
+
+            <div id="missiveThread" class="missive-thread" hidden>
+              <h3 id="missiveThreadToggle" class="collapsible-header">
+                <span class="group-caret" id="missiveThreadCaret">▸</span>Email thread
+              </h3>
+              <div id="missiveMessages" hidden></div>
+            </div>
+          </div>
+
+          <div class="detail-side">
+            <h3>Comments</h3>
+            <div class="comment-composer">
+              <div class="template-row">
+                <select id="templateSelect">
+                  <option value="">Comment template…</option>
+                </select>
+                <button type="button" id="manageTemplatesBtn" class="btn btn-ghost" title="Add or edit comment templates">⚙</button>
+              </div>
+              <textarea id="commentBody" placeholder="Add a comment…"></textarea>
+              <div id="notifyPicker" class="notify-picker" hidden>
+                <span class="notify-picker-label">Notify:</span>
+                <div id="notifyPickerList" class="notify-picker-list"></div>
+              </div>
+              <div id="attachFileRow" class="attach-file-row" hidden>
+                <input type="file" id="commentFileInput" hidden />
+                <button type="button" id="chooseFileBtn" class="btn btn-ghost">📎 Attach file</button>
+                <div id="selectedFileInfo" class="selected-file-info" hidden>
+                  <input type="text" id="attachFileName" placeholder="Filename" />
+                  <button type="button" id="removeFileBtn" class="btn btn-ghost" title="Remove attachment">&times;</button>
+                </div>
+              </div>
+              <button id="postCommentBtn" class="btn btn-primary">Post comment</button>
+            </div>
+            <ul id="commentList" class="comment-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- New task modal -->
+<div id="newTaskModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel">
+    <button class="detail-close" id="newTaskClose">&times;</button>
+    <h2>New task</h2>
+    <label>Title <input id="newTaskTitle" type="text" /></label>
+    <label>Link (optional) <input id="newTaskUrl" type="url" /></label>
+    <label>Importance
+      <select id="newTaskImportance">
+        <option value="1">Low</option>
+        <option value="2" selected>Normal</option>
+        <option value="3">High</option>
+        <option value="4">Urgent</option>
+      </select>
+    </label>
+    <button id="createTaskBtn" class="btn btn-primary">Create</button>
+  </div>
+</div>
+
+<!-- Save view modal -->
+<div id="saveViewModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel">
+    <button class="detail-close" id="saveViewClose">&times;</button>
+    <h2>Save view</h2>
+    <label>Name <input id="saveViewName" type="text" placeholder="e.g. Rush tickets" /></label>
+    <label class="checkbox-label"><input id="saveViewDefault" type="checkbox" /> Open this view by default</label>
+    <button id="saveViewConfirm" class="btn btn-primary">Save</button>
+  </div>
+</div>
+
+<!-- Manage views modal -->
+<div id="manageViewsModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel">
+    <button class="detail-close" id="manageViewsClose">&times;</button>
+    <h2>Saved views</h2>
+    <ul id="viewsManageList" class="views-manage-list"></ul>
+  </div>
+</div>
+
+<!-- Manage comment templates modal -->
+<div id="manageTemplatesModal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel">
+    <button class="detail-close" id="manageTemplatesClose">&times;</button>
+    <h2 id="templateFormTitle">New template</h2>
+    <label>Name <input id="templateName" type="text" placeholder="e.g. Requesting info" /></label>
+    <label>Body <textarea id="templateBody" placeholder="Comment text…"></textarea></label>
+    <div class="template-form-actions">
+      <button id="templateSaveBtn" class="btn btn-primary">Save</button>
+      <button id="templateCancelEditBtn" class="btn btn-ghost" hidden>Cancel edit</button>
+    </div>
+    <ul id="templatesManageList" class="views-manage-list"></ul>
+  </div>
+</div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

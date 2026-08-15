@@ -1,0 +1,17 @@
+{
+  "name": "furry-disco",
+  "version": "1.0.0",
+  "description": "Todo dashboard integrating IRIS CRM helpdesk tickets and Missive email tasks",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "node-cron": "^3.0.3"
+  }
+}
