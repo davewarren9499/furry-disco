@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
 import * as iris from '../integrations/iris.js';
+import * as missive from '../integrations/missive.js';
 
 export const commentsRouter = Router();
 
@@ -83,6 +84,23 @@ commentsRouter.post('/task/:taskId', async (req, res) => {
           comment: db.prepare('SELECT * FROM comments WHERE id = ?').get(id),
           warning: `Saved locally but failed to post to IRIS: ${err.message}`,
         });
+      }
+    } else if (task.source === 'missive') {
+      // Missive's comment equivalent is a "post" on the underlying
+      // conversation -- only possible when there is one (a standalone task
+      // with no linked conversation has nothing to post to, so it stays
+      // local-only, same as before this existed).
+      const meta = task.meta ? JSON.parse(task.meta) : {};
+      if (meta.conversationId) {
+        try {
+          await missive.postConversationComment(meta.conversationId, body);
+        } catch (err) {
+          console.error(`[comments] failed to post to Missive conversation ${meta.conversationId}:`, err.message);
+          return res.status(207).json({
+            comment: db.prepare('SELECT * FROM comments WHERE id = ?').get(id),
+            warning: `Saved locally but failed to post to Missive: ${err.message}`,
+          });
+        }
       }
     }
 
