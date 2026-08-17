@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   title TEXT NOT NULL,
   url TEXT,                          -- deep link back to source
   importance INTEGER NOT NULL DEFAULT 2,  -- 1 low, 2 normal, 3 high, 4 urgent
-  rank REAL NOT NULL DEFAULT 0,      -- vestigial: was drag-and-drop ordering: no longer read/written (list sorts by date added instead)
   status TEXT NOT NULL DEFAULT 'open', -- 'open' | 'resolved' | 'done'
   reason TEXT,                       -- why it's on the board: 'assigned' | 'mentioned'
   assignee TEXT,
@@ -63,6 +62,17 @@ CREATE TABLE IF NOT EXISTS merchant_cache (
   cached_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+// Migration: 'rank' was drag-and-drop ordering, removed when manual
+// reordering was dropped in favor of sorting by date added/last comment.
+// CREATE TABLE IF NOT EXISTS above doesn't touch existing databases that
+// still have the column, so this drops it explicitly, once, on any db that
+// predates the change. table_info check keeps it a no-op on fresh installs
+// and on every subsequent boot of an already-migrated database.
+const hasRankColumn = db.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'rank'").get();
+if (hasRankColumn) {
+  db.exec('ALTER TABLE tasks DROP COLUMN rank');
+}
 
 export function getSyncState(key) {
   const row = db.prepare('SELECT value FROM sync_state WHERE key = ?').get(key);

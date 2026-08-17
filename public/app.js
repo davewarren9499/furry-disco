@@ -14,6 +14,8 @@ const state = {
   commentFiles: {}, // remote comment id -> [{id, name, size}], from the live ticket-info fetch
   ticketAssignees: [], // [{id, name}] for the open IRIS task, for the comment notify picker
   selectedCommentFile: null, // File object staged to upload with the next comment, or null
+  needsAttentionOnly: false, // quick-filter: only mentions + Rush priority (Open tab only)
+  dismissedNotifIds: new Set(), // task ids cleared from the notification panel; populated at boot
 };
 
 const IMPORTANCE_LABEL = { 1: 'Low', 2: 'Normal', 3: 'High', 4: 'Urgent' };
@@ -102,7 +104,101 @@ async function loadCounts() {
   for (const key of ['open', 'resolved', 'done']) {
     document.getElementById(`count-${key}`).textContent = counts[key] ?? 0;
   }
+  await loadAttention();
 }
+
+// "Needs attention": an @mention or Rush priority. True regardless of tab
+// or filter state -- e.g. used for the notification bell badge, which
+// should reflect reality even while you're looking at the Done tab.
+function needsAttention(task) {
+  return task.reason === 'mentioned' || !!task.meta?.mentionedInComments || task.meta?.priority === 'Rush';
+}
+
+// Dismissing a notification doesn't touch the real signal (reason/priority
+// on the task itself) -- a mention is still a mention. It's purely a local
+// "I've seen this" layer, same localStorage-backed pattern as saved views,
+// so it persists across reloads without needing a server-side concept of
+// read/unread. Deliberately no auto-undismiss heuristic: task.updated_at
+// gets touched on every poll regardless of real change (see the note on
+// it elsewhere in this file), so comparing against it would just make
+// dismissals reappear within 2 minutes.
+const DISMISSED_KEY = 'furry-disco:dismissedNotifIds';
+
+function loadDismissedNotifsFromStorage() {
+  try {
+    state.dismissedNotifIds = new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY) || '[]'));
+  } catch {
+    state.dismissedNotifIds = new Set();
+  }
+}
+
+function persistDismissedNotifs() {
+  localStorage.setItem(DISMISSED_KEY, JSON.stringify([...state.dismissedNotifIds]));
+}
+
+async function loadAttention() {
+  const all = await api('/tasks/attention');
+  const items = all.filter((t) => !state.dismissedNotifIds.has(t.id));
+
+  const badge = document.getElementById('notifBadge');
+  if (items.length) {
+    badge.textContent = items.length > 99 ? '99+' : String(items.length);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+
+  const list = document.getElementById('notifList');
+  if (!items.length) {
+    list.innerHTML = '<li class="notif-empty">Nothing needs attention right now.</li>';
+    return;
+  }
+  list.innerHTML = items.map((t) => {
+    const isMentioned = t.reason === 'mentioned' || t.meta?.mentionedInComments;
+    const badgeHtml = isMentioned
+      ? '<span class="badge badge-mentioned">Mentioned</span>'
+      : '<span class="badge badge-mentioned">Rush</span>';
+    return `
+      <li class="notif-item" data-notif-task="${t.id}">
+        ${badgeHtml}
+        <span class="notif-item-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+        <button type="button" class="notif-dismiss" data-dismiss-task="${t.id}" title="Clear this notification">&times;</button>
+      </li>`;
+  }).join('');
+
+  document.querySelectorAll('[data-notif-task]').forEach((li) => {
+    li.addEventListener('click', () => {
+      document.getElementById('notifPanel').hidden = true;
+      openRelatedTicket(li.dataset.notifTask);
+    });
+  });
+  document.querySelectorAll('[data-dismiss-task]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't also trigger the row's navigate-to-ticket click
+      dismissNotif(btn.dataset.dismissTask);
+    });
+  });
+}
+
+function dismissNotif(taskId) {
+  state.dismissedNotifIds.add(taskId);
+  persistDismissedNotifs();
+  loadAttention();
+}
+
+document.getElementById('notifClearAllBtn').addEventListener('click', async () => {
+  const all = await api('/tasks/attention');
+  all.forEach((t) => state.dismissedNotifIds.add(t.id));
+  persistDismissedNotifs();
+  loadAttention();
+});
+
+document.getElementById('notifBtn').addEventListener('click', () => {
+  document.getElementById('notifPanel').hidden = !document.getElementById('notifPanel').hidden;
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.notif-wrap')) document.getElementById('notifPanel').hidden = true;
+});
 
 async function loadTemplates() {
   state.templates = await api('/templates');
@@ -161,17 +257,21 @@ function renderTemplatesManageList() {
   });
 }
 
+// Every modal in this app closes the same two ways: its own close button
+// and clicking the backdrop. What opens it (and any state reset that needs
+// to happen first) differs per modal, so only the closing half is generic.
+function wireModalClose(modalId, closeBtnId) {
+  const modal = document.getElementById(modalId);
+  document.getElementById(closeBtnId).addEventListener('click', () => { modal.hidden = true; });
+  modal.querySelector('.modal-backdrop').addEventListener('click', () => { modal.hidden = true; });
+}
+
 document.getElementById('manageTemplatesBtn').addEventListener('click', () => {
   resetTemplateForm();
   renderTemplatesManageList();
   document.getElementById('manageTemplatesModal').hidden = false;
 });
-document.getElementById('manageTemplatesClose').addEventListener('click', () => {
-  document.getElementById('manageTemplatesModal').hidden = true;
-});
-document.querySelector('#manageTemplatesModal .modal-backdrop').addEventListener('click', () => {
-  document.getElementById('manageTemplatesModal').hidden = true;
-});
+wireModalClose('manageTemplatesModal', 'manageTemplatesClose');
 document.getElementById('templateCancelEditBtn').addEventListener('click', resetTemplateForm);
 
 document.getElementById('templateSaveBtn').addEventListener('click', async () => {
@@ -307,6 +407,14 @@ document.getElementById('sortSelect').addEventListener('change', (e) => {
 // filter is active. Mentioned tickets bypass filtering too, on the theory
 // that "someone tagged you" should never be one click away from invisible.
 function visibleTasks() {
+  // A dedicated quick-filter, not a facet layered under type/priority --
+  // "mentioned OR Rush" isn't expressible as an AND of the existing
+  // multiselect facets, so this short-circuits them entirely when active.
+  if (state.needsAttentionOnly) {
+    document.getElementById('listFilterNote').hidden = true;
+    return state.tasks.filter(needsAttention);
+  }
+
   const hasFilters = state.typeFilters.size > 0 || state.priorityFilters.size > 0;
   document.getElementById('listFilterNote').hidden = !hasFilters;
   if (!hasFilters) return state.tasks;
@@ -362,17 +470,27 @@ function render() {
   }
 }
 
-// 'resolved' is API-driven only (see server/poller.js -- the source always
-// wins on the next poll, and PATCHing a task to 'resolved' actually closes
-// the real ticket in IRIS). It's deliberately not a quick-move/bulk target:
-// a stray click shouldn't resolve a live support ticket, and once IRIS or
-// Missive reports something resolved, it stays there until the source says
-// otherwise -- there's nothing useful a manual "un-resolve" would do.
-const QUICK_MOVE_TARGETS = {
-  open: [['done', 'Done']],
-  resolved: [],
-  done: [['open', 'Open']],
-};
+// 'resolved' is API-driven-only for IRIS (see server/poller.js -- the
+// source always wins on the next poll, and PATCHing a task to 'resolved'
+// actually closes the real ticket). A stray click shouldn't resolve a live
+// support ticket, so IRIS never gets a manual "Close" option. Missive is
+// the deliberate exception -- it genuinely supports closing cleanly from
+// an integration (see server/routes/tasks.js), so it gets a real "Close"
+// action here, pushed for real. Neither source gets a manual "un-resolve":
+// once something lands in Resolved, it stays there.
+function getMoveOptions(task) {
+  if (task.status === 'open') {
+    const opts = [['done', 'Move to Done']];
+    if (task.source === 'missive') opts.push(['resolved', 'Close']);
+    return opts;
+  }
+  if (task.status === 'done') {
+    const opts = [['open', 'Move to Open']];
+    if (task.source === 'missive') opts.push(['resolved', 'Close']);
+    return opts;
+  }
+  return []; // resolved
+}
 
 function renderTaskItem(task) {
   const li = document.createElement('li');
@@ -380,6 +498,11 @@ function renderTaskItem(task) {
   li.dataset.id = task.id;
   if (task.id === state.activeTaskId) li.classList.add('active');
   if (state.selectedIds.has(task.id)) li.classList.add('selected');
+  // Tickets I'm already assigned to (so not in the separate "Mentioned"
+  // group) can still have an @mention buried in a long comment thread --
+  // server/poller.js flags that via meta.mentionedInComments so it's
+  // visible without opening every ticket to check.
+  if (task.meta?.mentionedInComments) li.classList.add('task-item-mentioned');
 
   // No per-row "Mentioned" badge: every mentioned task already lives under
   // the "Mentioned" group header (see groupLabel above), so it'd be pure
@@ -402,9 +525,9 @@ function renderTaskItem(task) {
     subText = `<span class="task-merchant" data-mid="${escapeHtml(mid)}">${dba ? escapeHtml(dba) : '…'} · ${escapeHtml(mid)}</span>`;
   }
 
-  const moveOptions = QUICK_MOVE_TARGETS[task.status] || [];
+  const moveOptions = getMoveOptions(task);
   // Resolved rows get no manual status controls at all -- see the note on
-  // QUICK_MOVE_TARGETS above. Bulk-select would otherwise let "Move to
+  // getMoveOptions above. Bulk-select would otherwise let "Move to
   // Done" apply to resolved items too, which the next poll just reverts.
   const canManuallyMove = task.status !== 'resolved';
 
@@ -429,7 +552,7 @@ function renderTaskItem(task) {
     <div class="task-quick-menu">
       <button type="button" class="task-kebab" title="Move to…">⋮</button>
       <div class="task-kebab-panel" hidden>
-        ${moveOptions.map(([status, label]) => `<button type="button" data-move-status="${status}">Move to ${label}</button>`).join('')}
+        ${moveOptions.map(([status, label]) => `<button type="button" data-move-status="${status}">${label}</button>`).join('')}
       </div>
     </div>` : ''}
     ${task.url ? `<a class="task-source-link" href="${task.url}" target="_blank" rel="noopener" title="Open in source">↗</a>` : ''}
@@ -455,7 +578,8 @@ function renderTaskItem(task) {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         kebabPanel.hidden = true;
-        await api(`/tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify({ status: btn.dataset.moveStatus }) });
+        const result = await api(`/tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify({ status: btn.dataset.moveStatus }) });
+        if (result?.warning) alert(result.warning);
         await Promise.all([loadTasks(), loadCounts()]);
       });
     });
@@ -493,7 +617,15 @@ document.querySelectorAll('[data-bulk-status]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     const status = btn.dataset.bulkStatus;
     const ids = [...state.selectedIds];
-    await Promise.all(ids.map((id) => api(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) })));
+    const results = await Promise.all(
+      ids.map((id) => api(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }))
+    );
+    // Bulk-bar only offers open/done today (see index.html), neither of
+    // which can 207 -- but PATCH /tasks/:id can, so this stays correct if
+    // a bulk "Close" for Missive is ever added, instead of silently
+    // dropping failures for however many of the selected tasks hit one.
+    const warnings = results.map((r) => r?.warning).filter(Boolean);
+    if (warnings.length) alert(warnings.join('\n'));
     await Promise.all([loadTasks(), loadCounts()]);
   });
 });
@@ -578,6 +710,15 @@ function activateTabUI(tab) {
     document.getElementById('searchInput').value = '';
     document.getElementById('listFilterNote').hidden = true;
   }
+
+  // "Needs attention" is specifically an Open-tab thing (see the /attention
+  // endpoint, which only ever returns open tickets) -- hidden and reset
+  // elsewhere so it can't silently keep filtering a tab where it doesn't apply.
+  document.getElementById('attentionToggleBtn').hidden = tab !== 'open';
+  if (tab !== 'open') {
+    state.needsAttentionOnly = false;
+    document.getElementById('attentionToggleBtn').classList.remove('active');
+  }
 }
 
 function setTab(tab) {
@@ -593,6 +734,12 @@ document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => setTab(btn.dataset.tab));
 });
 
+document.getElementById('attentionToggleBtn').addEventListener('click', (e) => {
+  state.needsAttentionOnly = !state.needsAttentionOnly;
+  e.currentTarget.classList.toggle('active', state.needsAttentionOnly);
+  render();
+});
+
 document.getElementById('syncBtn').addEventListener('click', async () => {
   const btn = document.getElementById('syncBtn');
   btn.disabled = true;
@@ -604,6 +751,42 @@ document.getElementById('syncBtn').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = '⟳ Sync';
   }
+});
+
+// ---- Keyboard navigation (Up/Down through the task list) ----
+
+// Group headers are real <li>s in the same list, so a plain
+// querySelectorAll('.task-item') is needed rather than nth-child math --
+// and it naturally skips collapsed groups, since their rows aren't in the
+// DOM at all while folded (see render()).
+function visibleTaskRows() {
+  return [...document.querySelectorAll('#taskList .task-item')];
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  // Don't hijack arrow keys while typing/selecting in a form field (search
+  // box, comment textarea, a <select>, etc.).
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) return;
+
+  const rows = visibleTaskRows();
+  if (!rows.length) return;
+  e.preventDefault();
+
+  const currentIndex = rows.findIndex((li) => li.dataset.id === state.activeTaskId);
+  let nextIndex;
+  if (currentIndex === -1) {
+    // Nothing selected yet: Down starts at the top, Up starts at the bottom.
+    nextIndex = e.key === 'ArrowDown' ? 0 : rows.length - 1;
+  } else {
+    nextIndex = e.key === 'ArrowDown' ? currentIndex + 1 : currentIndex - 1;
+  }
+  if (nextIndex < 0 || nextIndex >= rows.length) return; // already at an end -- no wraparound
+
+  const nextRow = rows[nextIndex];
+  nextRow.scrollIntoView({ block: 'nearest' });
+  openDetail(nextRow.dataset.id);
 });
 
 // ---- Panel resizer ----
@@ -664,8 +847,11 @@ async function openDetail(taskId) {
     merchantLink.style.display = 'none';
   }
   document.getElementById('statusSelect').value = task.status;
-  // Resolved is API-driven only -- once a ticket lands there, nothing
-  // manual should move it back out (see QUICK_MOVE_TARGETS above).
+  // Resolved is selectable (to close) for Missive only -- IRIS stays
+  // manual-write-proof (see getMoveOptions above). Either way, once a task
+  // is already resolved the whole control locks: nothing manually moves it
+  // back out, for either source.
+  document.getElementById('statusResolvedOption').disabled = task.source !== 'missive';
   document.getElementById('statusSelect').disabled = task.status === 'resolved';
   document.getElementById('importanceSelect').value = task.importance;
 
@@ -675,18 +861,40 @@ async function openDetail(taskId) {
   closePdfViewer();
   state.commentFiles = {};
 
+  const missiveTaskInfoBox = document.getElementById('missiveTaskInfo');
   const missiveBox = document.getElementById('missiveThread');
   if (task.source === 'missive') {
-    missiveBox.hidden = false;
-    setMissiveThreadCollapsed(true); // collapsed by default each time a task is opened
-    document.getElementById('missiveMessages').innerHTML = '<p class="task-sub">Loading thread…</p>';
-    try {
-      const { messages } = await api(`/missive/thread/${task.id}`);
-      renderMissiveThread(messages);
-    } catch (err) {
-      document.getElementById('missiveMessages').innerHTML = `<p class="task-sub">Failed to load thread: ${escapeHtml(err.message)}</p>`;
+    // Task title/description/due are already on the task from the last
+    // sync (see normalizeMissiveTask) -- no fetch needed, unlike IRIS's
+    // ticket-info which is re-fetched live for freshness. Missive tasks
+    // refresh the same way, just on the next poll.
+    missiveTaskInfoBox.hidden = false;
+    renderMissiveTaskInfo(task.meta || {});
+
+    const conversationId = task.meta?.conversationId;
+    if (conversationId) {
+      missiveBox.hidden = false;
+      setMissiveThreadCollapsed(true); // collapsed by default each time a task is opened
+      document.getElementById('missiveThreadLabel').textContent = 'Email thread';
+      document.getElementById('missiveMessages').innerHTML = '<p class="task-sub">Loading thread…</p>';
+      try {
+        const { subject, messages } = await api(`/missive/thread/${task.id}`);
+        // Task name is already the drawer title; this shows the underlying
+        // email's own subject line alongside it when they differ (e.g. a
+        // "Close Batch" subtask sitting on an "[External] ..." thread).
+        if (subject && subject !== task.title) {
+          document.getElementById('missiveThreadLabel').textContent = `Email thread: ${subject}`;
+        }
+        renderMissiveThread(messages);
+      } catch (err) {
+        document.getElementById('missiveMessages').innerHTML = `<p class="task-sub">Failed to load thread: ${escapeHtml(err.message)}</p>`;
+      }
+    } else {
+      // Standalone task -- no conversation attached, nothing to show here.
+      missiveBox.hidden = true;
     }
   } else {
+    missiveTaskInfoBox.hidden = true;
     missiveBox.hidden = true;
   }
 
@@ -795,6 +1003,18 @@ document.addEventListener('click', async (e) => {
     console.error('Copy to clipboard failed:', err);
   }
 });
+
+function renderMissiveTaskInfo(meta) {
+  const box = document.getElementById('missiveTaskInfoBody');
+  const rows = [
+    ['Kind', meta.taskType === 'task' ? 'Task' : 'Email conversation'],
+    ['Due', meta.dueAt ? new Date(meta.dueAt).toLocaleString() : ''],
+  ].filter(([, v]) => v);
+
+  box.innerHTML = `
+    ${meta.description ? `<p class="ticket-description">${highlightMentions(escapeHtml(meta.description))}</p>` : '<p class="task-sub">No description.</p>'}
+    ${rows.length ? `<dl class="ticket-fields">${rows.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl>` : ''}`;
+}
 
 function renderTicketInfo(info) {
   const box = document.getElementById('ticketInfoBody');
@@ -986,7 +1206,8 @@ function closeDetail() {
 
 document.getElementById('statusSelect').addEventListener('change', async (e) => {
   if (!state.activeTaskId) return;
-  await api(`/tasks/${state.activeTaskId}`, { method: 'PATCH', body: JSON.stringify({ status: e.target.value }) });
+  const result = await api(`/tasks/${state.activeTaskId}`, { method: 'PATCH', body: JSON.stringify({ status: e.target.value }) });
+  if (result?.warning) alert(result.warning);
   await Promise.all([loadTasks(), loadCounts()]);
 });
 
@@ -1019,7 +1240,12 @@ document.getElementById('postCommentBtn').addEventListener('click', async () => 
       extendedFiles = [{ tmp_name: fileId, title: name }];
     }
     btn.textContent = 'Posting…';
-    await api(`/comments/task/${state.activeTaskId}`, { method: 'POST', body: JSON.stringify({ body, notify, extendedFiles }) });
+    const result = await api(`/comments/task/${state.activeTaskId}`, { method: 'POST', body: JSON.stringify({ body, notify, extendedFiles }) });
+    // 207 (partial success): saved locally but the push to IRIS/Missive
+    // failed -- same warning surfaced by the status-change and quick-move
+    // handlers below, so a silent partial failure doesn't look identical
+    // to a full success.
+    if (result?.warning) alert(result.warning);
     textarea.value = '';
     document.getElementById('templateSelect').value = '';
     clearSelectedCommentFile();
@@ -1036,20 +1262,40 @@ document.getElementById('postCommentBtn').addEventListener('click', async () => 
 document.getElementById('newTaskBtn').addEventListener('click', () => {
   document.getElementById('newTaskModal').hidden = false;
 });
-document.getElementById('newTaskClose').addEventListener('click', () => {
-  document.getElementById('newTaskModal').hidden = true;
-});
-document.querySelector('#newTaskModal .modal-backdrop').addEventListener('click', () => {
-  document.getElementById('newTaskModal').hidden = true;
+wireModalClose('newTaskModal', 'newTaskClose');
+document.querySelectorAll('input[name="newTaskKind"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    const isMissive = document.querySelector('input[name="newTaskKind"]:checked').value === 'missive';
+    document.getElementById('newTaskLocalFields').hidden = isMissive;
+    document.getElementById('newTaskMissiveFields').hidden = !isMissive;
+  });
 });
 document.getElementById('createTaskBtn').addEventListener('click', async () => {
   const title = document.getElementById('newTaskTitle').value.trim();
   if (!title) return;
-  const url = document.getElementById('newTaskUrl').value.trim();
-  const importance = Number(document.getElementById('newTaskImportance').value);
-  await api('/tasks', { method: 'POST', body: JSON.stringify({ title, url, importance }) });
+  const isMissive = document.querySelector('input[name="newTaskKind"]:checked').value === 'missive';
+
+  const btn = document.getElementById('createTaskBtn');
+  btn.disabled = true;
+  try {
+    if (isMissive) {
+      const description = document.getElementById('newTaskDescription').value.trim();
+      await api('/tasks', { method: 'POST', body: JSON.stringify({ title, createInMissive: true, description }) });
+      document.getElementById('newTaskDescription').value = '';
+    } else {
+      const url = document.getElementById('newTaskUrl').value.trim();
+      const importance = Number(document.getElementById('newTaskImportance').value);
+      await api('/tasks', { method: 'POST', body: JSON.stringify({ title, url, importance }) });
+      document.getElementById('newTaskUrl').value = '';
+    }
+  } catch (err) {
+    alert(`Failed to create task: ${err.message}`);
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+
   document.getElementById('newTaskTitle').value = '';
-  document.getElementById('newTaskUrl').value = '';
   document.getElementById('newTaskModal').hidden = true;
   if (state.tab === 'open') await loadTasks();
   await loadCounts();
@@ -1106,12 +1352,7 @@ document.getElementById('saveViewBtn').addEventListener('click', () => {
   document.getElementById('saveViewDefault').checked = false;
   document.getElementById('saveViewModal').hidden = false;
 });
-document.getElementById('saveViewClose').addEventListener('click', () => {
-  document.getElementById('saveViewModal').hidden = true;
-});
-document.querySelector('#saveViewModal .modal-backdrop').addEventListener('click', () => {
-  document.getElementById('saveViewModal').hidden = true;
-});
+wireModalClose('saveViewModal', 'saveViewClose');
 document.getElementById('saveViewConfirm').addEventListener('click', () => {
   const name = document.getElementById('saveViewName').value.trim();
   if (!name) return;
@@ -1138,12 +1379,7 @@ document.getElementById('manageViewsBtn').addEventListener('click', () => {
   renderManageViews();
   document.getElementById('manageViewsModal').hidden = false;
 });
-document.getElementById('manageViewsClose').addEventListener('click', () => {
-  document.getElementById('manageViewsModal').hidden = true;
-});
-document.querySelector('#manageViewsModal .modal-backdrop').addEventListener('click', () => {
-  document.getElementById('manageViewsModal').hidden = true;
-});
+wireModalClose('manageViewsModal', 'manageViewsClose');
 
 function renderManageViews() {
   const list = document.getElementById('viewsManageList');
@@ -1187,6 +1423,7 @@ function escapeHtml(str) {
 }
 
 // ---- Boot ----
+loadDismissedNotifsFromStorage();
 loadViewsFromStorage();
 renderViewSelect();
 const defaultViewId = localStorage.getItem(DEFAULT_VIEW_KEY);

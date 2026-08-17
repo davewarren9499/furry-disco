@@ -60,6 +60,83 @@ body {
 .views-bar { display: flex; gap: 6px; align-items: center; margin-right: 8px; padding-right: 14px; border-right: 1px solid var(--border); }
 .views-bar select { font-size: 0.82rem; padding: 6px 9px; max-width: 180px; }
 
+.notif-wrap { position: relative; }
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--urgent);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+.notif-badge[hidden] { display: none; }
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 340px;
+  max-height: 420px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+}
+.notif-panel[hidden] { display: none; }
+.notif-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.notif-panel h3 { margin: 0; }
+.notif-clear-all {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.notif-clear-all:hover { color: var(--text); text-decoration: underline; }
+.notif-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.notif-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.83rem;
+}
+.notif-item:hover { background: var(--surface-2); }
+.notif-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+}
+.notif-item:hover .notif-dismiss { opacity: 1; }
+.notif-dismiss:hover { background: var(--surface-3); color: var(--text); }
+.notif-item .badge { flex-shrink: 0; }
+.notif-empty { color: var(--text-faint); font-size: 0.82rem; padding: 10px 2px; }
+
+#attentionToggleBtn.active { background: var(--accent); color: #fff; }
+
 .btn {
   border: none;
   border-radius: var(--radius-sm);
@@ -295,6 +372,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .task-item:hover { background: var(--surface-2); }
 .task-item.active { background: var(--accent-soft); border-color: var(--accent); }
 .task-item.selected { border-color: var(--accent); }
+/* Same amber tint as .comment-item-mentioned, for visual consistency --
+   both mean the same thing: an @mention of you somewhere in the comments. */
+.task-item-mentioned { background: rgba(255, 171, 64, 0.12); border-color: rgba(255, 171, 64, 0.35); }
+.task-item-mentioned:hover { background: rgba(255, 171, 64, 0.18); }
+.task-item-mentioned.active { background: var(--accent-soft); border-color: var(--accent); }
 
 .task-checkbox {
   flex-shrink: 0;

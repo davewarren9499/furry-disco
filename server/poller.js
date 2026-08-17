@@ -14,7 +14,14 @@ const upsertTask = db.prepare(`
     url = excluded.url,
     reason = excluded.reason,
     assignee = excluded.assignee,
-    meta = excluded.meta,
+    -- Merge, not overwrite: normalizeTicket()/normalizeMissiveTask() never
+    -- know about fields set out-of-band on this row (currently just
+    -- meta.mentionedInComments, from the mention backfill/scan below), so
+    -- a plain overwrite here would silently wipe them out on every regular
+    -- poll. json_patch keeps any key the new meta doesn't mention; a key
+    -- explicitly set to null in the new meta still deletes it (RFC 7396
+    -- merge-patch semantics), so real field resets still work as before.
+    meta = json_patch(COALESCE(tasks.meta, '{}'), excluded.meta),
     updated_at = datetime('now'),
     -- Prefer the source's real resolution timestamp; fall back to a
     -- previously-recorded one, then to "now" as a last resort (e.g. the
@@ -42,6 +49,16 @@ function upsert(normalized) {
   upsertTask.run({ id: existing ? existing.id : randomUUID(), resolvedAt: null, ...normalized });
 }
 
+// Patches meta.mentionedInComments onto an already-synced row without
+// touching anything else the normal upsert manages (title, status, reason,
+// ...). Used for tickets I'm already assigned to -- reason stays 'assigned'
+// (that drives grouping), this is a separate signal used only to highlight
+// the row, for a mention that'd otherwise be buried in the comment list.
+const markMentionedInComments = db.prepare(`
+  UPDATE tasks SET meta = json_set(COALESCE(meta, '{}'), '$.mentionedInComments', 1)
+  WHERE source = 'iris' AND source_id = ?
+`);
+
 // Not exported -- only called from pollAll() below, which is the module's
 // actual public entry point.
 async function pollIris() {
@@ -53,15 +70,32 @@ async function pollIris() {
   }
 
   // Scan tickets updated since the last poll for @mentions of me in new
-  // comments, even when I'm not the assignee (e.g. someone loops me in).
-  const lastPoll = getSyncState('iris_last_poll') || new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  // comments -- both for tickets I'm not assigned to (reason: 'mentioned',
+  // its own group) and, separately, tickets I already am assigned to (just
+  // flagged via meta.mentionedInComments, since a mention there can still
+  // get buried in a long comment thread otherwise).
+  //
+  // storedLastPoll is null only right after a fresh restart, in which case
+  // lastPoll falls back to a 24h window -- on an active queue that's most
+  // of the ~200 currently-assigned tickets, and fetching comments for each
+  // one (a real sequential API call per ticket) would make the first poll
+  // take a very long time. isColdStart skips the already-assigned half of
+  // this scan on that one poll only; every regular 2-minute poll after
+  // that has a small enough "recently modified" set for the full scan.
+  const storedLastPoll = getSyncState('iris_last_poll');
+  const isColdStart = !storedLastPoll;
+  const lastPoll = storedLastPoll || new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const updated = await iris.fetchRecentlyUpdatedTickets(lastPoll);
   const assignedIds = new Set(assigned.map((t) => String(t.id)));
   for (const ticket of updated) {
-    if (assignedIds.has(String(ticket.id))) continue; // already handled above
+    const isAssigned = assignedIds.has(String(ticket.id));
+    if (isAssigned && isColdStart) continue;
     try {
       const comments = await iris.fetchTicketComments(ticket.id);
-      if (comments.some(iris.commentMentionsMe)) {
+      if (!comments.some(iris.commentMentionsMe)) continue;
+      if (isAssigned) {
+        markMentionedInComments.run(String(ticket.id));
+      } else {
         upsert(iris.normalizeTicket(ticket, 'mentioned'));
       }
     } catch (err) {
@@ -74,15 +108,22 @@ async function pollIris() {
   return { assigned: assigned.length, scannedForMentions: updated.length };
 }
 
-async function pollMissive() {
+// Exported (unlike pollIris) so a task creation/close from the dashboard
+// can pull the fresh state back in immediately, without waiting for the
+// next scheduled poll or paying the cost of a full IRIS re-sync too.
+export async function pollMissive() {
   if (!process.env.MISSIVE_API_TOKEN) return { skipped: 'MISSIVE_API_TOKEN not set' };
 
-  const conversations = await missive.fetchAssignedConversations();
-  for (const conv of conversations) {
-    upsert(missive.normalizeConversation(conv));
+  // One call covers everything: standalone tasks, conversation subtasks,
+  // and tasked conversations, in any state -- see the comment on
+  // fetchMyTasks for why this replaced two separate conversations? calls.
+  const tasks = await missive.fetchMyTasks();
+  for (const task of tasks) {
+    upsert(missive.normalizeMissiveTask(task));
   }
+
   pruneResolved('missive');
-  return { assigned: conversations.length };
+  return { total: tasks.length };
 }
 
 // Keep only the most recent 25 resolved tasks per source visible; older

@@ -16,6 +16,18 @@
         <button id="saveViewBtn" class="btn btn-ghost" title="Save current tab, filters &amp; search as a view">☆ Save view</button>
         <button id="manageViewsBtn" class="btn btn-ghost" title="Manage saved views">⚙</button>
       </div>
+      <div class="notif-wrap">
+        <button id="notifBtn" class="btn btn-ghost" title="Needs attention: mentions &amp; Rush priority">
+          🔔<span id="notifBadge" class="notif-badge" hidden>0</span>
+        </button>
+        <div id="notifPanel" class="notif-panel" hidden>
+          <div class="notif-panel-header">
+            <h3>Needs attention</h3>
+            <button type="button" id="notifClearAllBtn" class="notif-clear-all">Clear all</button>
+          </div>
+          <ul id="notifList" class="notif-list"></ul>
+        </div>
+      </div>
       <button id="syncBtn" class="btn btn-ghost" title="Poll IRIS &amp; Missive now">⟳ Sync</button>
       <button id="newTaskBtn" class="btn btn-primary">+ New task</button>
     </div>
@@ -30,6 +42,7 @@
       </nav>
 
       <div class="list-filter" id="listFilter">
+        <button type="button" id="attentionToggleBtn" class="btn btn-ghost" title="Show only mentions &amp; Rush priority">⚡ Needs attention</button>
         <input id="searchInput" type="search" placeholder="Search title, MID, DBA, type, comments…" />
         <div class="multiselect">
           <button type="button" id="typeMsBtn" class="ms-btn">All ticket types</button>
@@ -100,7 +113,7 @@
           <label>Status
             <select id="statusSelect">
               <option value="open">Open</option>
-              <option value="resolved" disabled>Resolved</option>
+              <option value="resolved" id="statusResolvedOption" disabled>Resolved</option>
               <option value="done">Done</option>
             </select>
           </label>
@@ -137,9 +150,14 @@
               <ul id="relatedTicketsList" class="related-tickets-list"></ul>
             </div>
 
+            <div id="missiveTaskInfo" class="ticket-info" hidden>
+              <h3>Task info</h3>
+              <div id="missiveTaskInfoBody"></div>
+            </div>
+
             <div id="missiveThread" class="missive-thread" hidden>
               <h3 id="missiveThreadToggle" class="collapsible-header">
-                <span class="group-caret" id="missiveThreadCaret">▸</span>Email thread
+                <span class="group-caret" id="missiveThreadCaret">▸</span><span id="missiveThreadLabel">Email thread</span>
               </h3>
               <div id="missiveMessages" hidden></div>
             </div>
@@ -183,16 +201,25 @@
   <div class="modal-panel">
     <button class="detail-close" id="newTaskClose">&times;</button>
     <h2>New task</h2>
+    <div class="new-task-kind">
+      <label class="checkbox-label"><input type="radio" name="newTaskKind" value="local" checked /> Local task (this dashboard only)</label>
+      <label class="checkbox-label"><input type="radio" name="newTaskKind" value="missive" /> Create in Missive</label>
+    </div>
     <label>Title <input id="newTaskTitle" type="text" /></label>
-    <label>Link (optional) <input id="newTaskUrl" type="url" /></label>
-    <label>Importance
-      <select id="newTaskImportance">
-        <option value="1">Low</option>
-        <option value="2" selected>Normal</option>
-        <option value="3">High</option>
-        <option value="4">Urgent</option>
-      </select>
-    </label>
+    <div id="newTaskLocalFields">
+      <label>Link (optional) <input id="newTaskUrl" type="url" /></label>
+      <label>Importance
+        <select id="newTaskImportance">
+          <option value="1">Low</option>
+          <option value="2" selected>Normal</option>
+          <option value="3">High</option>
+          <option value="4">Urgent</option>
+        </select>
+      </label>
+    </div>
+    <div id="newTaskMissiveFields" hidden>
+      <label>Description (optional) <textarea id="newTaskDescription" placeholder="Task details…"></textarea></label>
+    </div>
     <button id="createTaskBtn" class="btn btn-primary">Create</button>
   </div>
 </div>
